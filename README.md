@@ -1053,9 +1053,11 @@ SHOW REPLICA STATUS\G
 
 ## 롤백 옵션
 
-> ⛔ **GREEN 8.4 → BLUE 8.0 reverse Data-in Replication 은 본 가이드의 표준 rollback 절차로 채택하지 않습니다.**
->
-> MySQL 공식 replication upgrade topology 문서는 **older source → newer replica** (8.0 → 8.4) 는 지원하지만 그 **반대 방향 (newer source → older replica, 8.4 → 8.0) 은 지원하지 않는다** 고 명시합니다. 8.4 에서 추가/변경된 sysvar · 키워드 · binlog 이벤트 형식이 8.0 replica 의 SQL thread 에서 거부되어 replication 이 깨질 수 있습니다.
+> ⛔ **`GREEN 8.4 → BLUE 8.0` 방향의 reverse replication 은 본 가이드의 표준 rollback 절차로 채택하지 않습니다.**
+> MySQL 공식 replication upgrade topology 문서는 지원되는 upgrade path 에서 **older source → newer replica role** 방향은 지원하지만, **later release source → earlier release replica role** 방향은 지원하지 않는다고 명시합니다.
+> 본 가이드의 BLUE / GREEN 은 Azure 리소스 관점에서는 각각 독립된 Flexible Server Primary 입니다. 다만 replication channel 관점에서는 binlog/GTID 를 제공하는 서버가 **source**, 이를 받아 적용하는 서버가 **target 또는 replica role** 입니다.
+> 현재 마이그레이션은 `BLUE 8.0 → GREEN 8.4` 방향이므로 BLUE 가 source, GREEN 이 target role 입니다. cutover 후 rollback 을 위해 방향을 `GREEN 8.4 → BLUE 8.0` 으로 뒤집으면 GREEN 이 source, BLUE 가 target role 이 되며, 이는 MySQL 공식 문서상 지원되지 않는 **newer source → older target** 방향입니다.
+> 따라서 cutover 후 GREEN 에 write 가 발생한 상태에서 BLUE 로 되돌리는 reverse replication 은 표준 rollback 으로 사용하지 않습니다.
 
 ### cutover 직후 (수 분 이내, GREEN 에 새 write 거의 없음)
 
