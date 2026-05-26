@@ -33,7 +33,7 @@
 
 | 변수 | 통과 조건 | 의미 / 다르면 무슨 일이? | 미통과 시 대응 |
 |---|---|---|---|
-| `lower_case_table_names` | BLUE 와 동일 (Linux 기본 = `1`) | 테이블/DB 이름 대소문자 처리. 다르면 같은 테이블을 못 찾음 | **GREEN 생성 시점에 동일 값으로** — 이후 변경 불가 |
+| `lower_case_table_names` | BLUE 와 동일 (Azure Flex 허용값: `1` 또는 `2`, 기본 = `1`) | 테이블/DB 이름 대소문자 처리. 다르면 같은 테이블을 못 찾음 | **GREEN 생성 시점에 동일 값으로 고정** — 생성 후 변경 불가. `az flexible-server create` 에는 지정 인자가 없으므로 BLUE 가 `2` 면 Portal Additional Configuration 또는 IaC 로 생성 시점에 `2` 지정. 상세 → [README §5.1](../README.md) |
 | `character_set_server` | BLUE 와 동일 (`utf8mb4` 권장) | 신규 객체/임시 테이블의 기본 charset. 다르면 한글/이모지 깨짐, JOIN 시 collation mismatch | Azure 파라미터로 변경 |
 | `collation_server` | BLUE 와 동일 (`utf8mb4_0900_ai_ci` 등) | 문자열 비교/정렬. 다르면 동일 문자열 비교 결과 차이, 인덱스 미사용, ORDER BY 결과 변경 | Azure 파라미터로 변경 |
 | `time_zone` | BLUE 와 동일 | `TIMESTAMP` 컴럼 저장값에 영향. 다르면 시간차만큼 어긋남 | Azure Flex 기본 `+00:00`. Azure 파라미터로 변경 |

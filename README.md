@@ -190,7 +190,7 @@ jq '[.checksPerformed[] | .detectedProblems[]? | select(.level=="Error")]' ~/upg
 |---|---|---|
 | Azure PaaS 노이즈 (제거된 sysvar, `azure_superuser` 관련 등) | **무시** | [docs/azure_flex_allowlist.md](docs/azure_flex_allowlist.md) |
 | 조건부 (`ssl_cipher`, `mysql_native_password` 계정 등) | **조건 확인 후 무시** | [docs/azure_flex_allowlist.md](docs/azure_flex_allowlist.md), [docs/authentication_plugins.md](docs/authentication_plugins.md) |
-| 진짜 Error (앱 계정 / 객체 DEFINER 등) | **수정 필요** | [docs/definer_handling.md](docs/definer_handling.md) |
+| Error (앱 계정 / 객체 DEFINER 등) | **수정 필요** | [docs/definer_handling.md](docs/definer_handling.md) |
 
 ---
 
@@ -269,28 +269,39 @@ MySQL 의 routine / trigger / view / event 는 정의 시점의 `DEFINER` 계정
 
 - ✅ **앱 / 관리 계정** (`<admin-user>@%` 등 — Step 7 dump 의 `--includeUsers` 대상이거나 GREEN 에 이미 존재) → dump/load 로 적재되거나 이미 있음. cutover 전에 `mysql.user` 에서 실재 확인
 - ⚠️ **이미 삭제된 계정 / 특정 host 로 고정된 계정** (예: `oldadmin@10.0.0.5`) → BLUE 에서 미리 재정의 (host 를 `%` 등으로) 후 dump 재수행
-- ❌ **Azure 내부 계정** (`azure_superuser@*`) → BLUE 에서 안전한 DEFINER 로 재정의. GREEN 의 `azure_superuser` 는 이름이 같아도 BLUE 와 별개 객체이므로, 재정의 없이 그대로 두면 cutover 후 ERROR 1449 발생
 - ⚠️ **`--includeUsers` 화이트리스트에 없는 계정** 이 DEFINER 인 경우 → 해당 계정을 `--includeUsers` 목록에 추가하거나, BLUE 에 이미 존재하는 다른 운영 계정으로 재정의
 
 > ⚠️ DEFINER 패턴을 REGEXP 로 필터링하면 **위험한 DEFINER 를 놓칠 수 있음**.
 > **모든 사용자 객체를 출력**하고 `definer` 컬럼을 눈으로 판정합니다.
 
 ```sql
-SELECT 'ROUTINE' AS kind, routine_schema AS db, routine_name AS name, definer
-  FROM information_schema.routines
- WHERE routine_schema NOT IN ('mysql','sys','performance_schema','information_schema')
+SELECT 'ROUTINE' AS kind, 
+		routine_schema AS db, 
+		routine_name AS name, 
+		definer
+FROM information_schema.routines
+WHERE routine_schema NOT IN ('mysql','sys','performance_schema','information_schema')
 UNION ALL
-SELECT 'TRIGGER', trigger_schema, trigger_name, definer
-  FROM information_schema.triggers
- WHERE trigger_schema NOT IN ('mysql','sys','performance_schema','information_schema')
+SELECT 'TRIGGER' AS kind,
+		trigger_schema AS db, 
+		trigger_name AS name, 
+		definer
+FROM information_schema.triggers
+WHERE trigger_schema NOT IN ('mysql','sys','performance_schema','information_schema')
 UNION ALL
-SELECT 'VIEW', table_schema, table_name, definer
-  FROM information_schema.views
- WHERE table_schema NOT IN ('mysql','sys','performance_schema','information_schema')
+SELECT 'VIEW' AS kind, 
+		table_schema AS db, 
+		table_name AS name, 
+		definer
+FROM information_schema.views
+WHERE table_schema NOT IN ('mysql','sys','performance_schema','information_schema')
 UNION ALL
-SELECT 'EVENT', event_schema, event_name, definer
-  FROM information_schema.events
- WHERE event_schema NOT IN ('mysql','sys','performance_schema','information_schema')
+SELECT 'EVENT' AS kind,
+		event_schema AS db, 
+		event_name AS name, 
+		definer
+FROM information_schema.events
+WHERE event_schema NOT IN ('mysql','sys','performance_schema','information_schema')
 ORDER BY kind, db, name;
 ```
 
@@ -340,7 +351,7 @@ Step 12 의 `az mysql flexible-server gtid reset` 명령은 다음 두 조건이
 - Read Replica 는 삭제로 해소 가능 (시간 소요, Step 16 에서 재생성)
 - **HA = ZoneRedundant 서버의 Geo-redundant backup 은 생성 후 토글 불가** (Azure portal 안내 문구: *"Enabling/Disabling Geo-redundancy post server creation is currently not supported for servers with zone-redundant storage."*) → **서버 재생성** 만이 유일한 경로
 
-또한 `lower_case_table_names` 는 서버 생성 후 **절대 변경 불가** 이므로 BLUE 와 동일한 값으로 맞추어야 합니다.
+또한 `lower_case_table_names` 는 서버 생성 후 **변경 불가** 이므로 BLUE 와 동일한 값으로 맞추어야 합니다.
 
 ## 5.1 BLUE `lower_case_table_names` 값 확인 (GREEN 생성 전)
 
@@ -351,7 +362,10 @@ SHOW VARIABLES LIKE 'lower_case_table_names';
 -- Azure Database for MySQL Flexible Server 기본 = 1 (Portal / CLI 로 생성 시 default)
 ```
 
-Azure Database for MySQL Flexible Server 에서 `lower_case_table_names` 는 **`1` (default) 또는 `2`** 만 허용됩니다. BLUE 가 `1` 이면 GREEN 도 default 로 `1` 이 되므로 추가 작업 없이 5.2 로 진행하면 됩니다. **BLUE 가 `2`** 인 드문 경우에만 5.2 의 추가 `parameter set` 단계를 수행합니다.
+Azure Database for MySQL Flexible Server 에서 `lower_case_table_names` 는 **`1` (default) 또는 `2`** 를 허용됩니다. 이 값은 서버 생성 시점에 결정되며 생성 후 변경 불가, BLUE 와 동일한 값으로 GREEN 을 생성해야 합니다.
+
+- **BLUE = `1`** → GREEN default 와 동일. 5.2 의 `az flexible-server create` 를 그대로 실행
+- **BLUE = `2`** → GREEN 생성 시점에 `2` 로 지정 필요. `az flexible-server create` 에는 이 값을 지정하는 인자가 없으므로 Portal 의 **Additional configuration** 또는 IaC (Bicep/ARM/Terraform) 로 생성 시점에 고정
 
 ## 5.2 GREEN 생성
 
@@ -370,8 +384,6 @@ az mysql flexible-server create \
   --admin-user <admin-user> --admin-password <password> \
   --backup-retention 7 --geo-redundant-backup Disabled
 ```
-
-> Azure Portal / CLI 모두 `lower_case_table_names` default = `1` 이므로 BLUE 가 `1` 이면 별도 설정 불필요.
 
 > ⚠️ **Read Replica 는 만들지 말 것** — Step 12 의 `gtid reset` 이 거부됩니다.  
 > ⚠️ **Geo-redundancy 는 Disabled** — `gtid reset` prerequisite. 본 환경은 BLUE/GREEN 모두 Disabled 로 유지.  
@@ -459,7 +471,7 @@ ls -la $DUMPDIR       # . 과 .. 만 보여야 OK
 
 ## 7.2 dump 실행
 
-> ⚠️ 사용자 계정은 `--includeUsers` 화이트리스트에 **명시한 계정만** dump 대상으로 삼습니다. "빌트인/관리자 계정은 자동 제외된다" 는 동작에 의존하지 말고, 완료 후 dump 로그의 `M users will be dumped` 가 기대 계정 수와 일치하는지 + load dry-run 으로 관리자/내부 계정이 섞여 있지 않은지 확인하세요.
+> ⚠️ 사용자 계정은 `--includeUsers` 화이트리스트에 **명시한 계정만** dump 대상으로 삼습니다. "빌트인/관리자 계정은 자동 제외된다" 는 동작에 의존하지 말고, 완료 후 dump 로그의 `M users will be dumped` 가 기대 계정 수와 일치하는지 + load dry-run 으로 관리자/내부 계정이 섞여 있지 않은지 확인하세요.  
 > 💡 아래 예시는 본 환경에서 검증된 형식입니다 (`--includeUsers="user@%"`). MySQL Shell 공식 문서는 user account 문자열을 `'user_name'@'host_name'` 형태로 명시하길 권장하므로, 환경에 따라 `--includeUsers="'app_user_1'@'%'"` 처럼 더 엄격한 quote 형식 을 쓰면 user/host 파싱 모호성을 줄일 수 있습니다.
 
 ```bash
@@ -628,7 +640,7 @@ az mysql flexible-server show -g <resource-group> -n <green-name> \
 
 - GREEN 의 `gtid_purged` 와 `gtid_executed` 를 모두 `--gtid-set` 으로 준 값 (= `BLUE_GTID`) 으로 **강제 설정** 함
 - 의미: "이 GTID 까지의 트랜잭션은 이미 적용되었다" 고 GREEN 에게 알림 → Step 14 의 auto-position 이 그 **다음** GTID 부터 가져오게 됨
-- 부작용: **GREEN 의 기존 백업이 모두 무효화** 됨 (최근 백업으로 돌아갈 수 없음)
+- 영향: **GREEN 의 기존 백업이 모두 무효화** 됨 (최근 백업으로 돌아갈 수 없음)
 
 > 💡 이 명령이 PaaS 우회인 이유: 일반 MySQL 에서는 `RESET MASTER` + `SET GLOBAL gtid_purged=...` 로 직접 설정할 수 있지만, Azure Flex admin 은 그 권한이 없어 Azure CLI 를 통해서만 설정 가능합니다.
 
@@ -1082,7 +1094,7 @@ DNS / connection string 을 BLUE 로 원복 → BLUE `read_only=OFF` 로 되돌�
 | 문서 | 내용 |
 |---|---|
 | [docs/parameter_compatibility.md](docs/parameter_compatibility.md) | 17개 파라미터 통과 조건 / 의미 / 미통과 대응, BLUE↔GREEN diff 스크립트 |
-| [docs/azure_flex_allowlist.md](docs/azure_flex_allowlist.md) | Upgrade Checker 노이즈 (무조건 무시 / 조건부 무시 / 진짜 차단) 분류 |
+| [docs/azure_flex_allowlist.md](docs/azure_flex_allowlist.md) | Upgrade Checker 노이즈 (무조건 무시 / 조건부 무시 / Error) 분류 |
 | [docs/authentication_plugins.md](docs/authentication_plugins.md) | `mysql_native_password` vs `caching_sha2_password`, 8.4 `authentication_policy`, `--includeUsers` 동작 |
 | [docs/definer_handling.md](docs/definer_handling.md) | DEFINER 판정 표, ERROR 1449, DROP+CREATE 레시피 |
 
