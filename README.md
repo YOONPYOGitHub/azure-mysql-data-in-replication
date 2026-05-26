@@ -686,8 +686,8 @@ SELECT @@GLOBAL.gtid_executed;
 왜 **bundle (DigiCert Global Root G2 + Microsoft RSA Root CA 2017)** 을 기본값으로 쓰는가:
 
 - Azure Database for MySQL Flexible Server 는 현재 **dual-signed certificates** 를 제공하며, 신뢰 루트는 **DigiCert Global Root G2** 와 **Microsoft RSA Root CA 2017** 두 가지입니다 ([MS 공식 안내](https://learn.microsoft.com/en-us/azure/mysql/flexible-server/how-to-connect-tls-ssl)).
-- 본 환경 리허설에서는 DigiCert G2 단일 PEM 으로도 SSL 검증이 성공했지만, **Azure CA rotation 시 서비스가 다른 루트로 서명될 수 있으므로** 공식 권장은 두 root 를 결합한 bundle 을 쓰는 것입니다.
-- 따라서 운영 runbook 기본값은 **bundle (`/tmp/azure_mysql_ca_bundle.pem`)** 으로 고정하고, DigiCert G2 단일 PEM 은 디버그/대체 용도로만 보조합니다.
+- 본 가이드는 Azure Database for MySQL Flexible Server 의 권장 방식에 따라 **DigiCert Global Root G2 + Microsoft RSA Root CA 2017** 을 결합한 CA bundle 사용을 기본값으로 합니다.
+- **Azure CA rotation 시 서비스가 다른 루트로 서명될 수 있으므로**, 운영 절차는 **bundle (`/tmp/azure_mysql_ca_bundle.pem`) 기준으로 검증하고 수행** 합니다.
 - Step 14 의 `mysql.az_replication_change_master_with_gtid` 는 마지막 인자로 **CA 의 PEM 텍스트 자체** 를 받으므로, bundle 파일 전체를 `cat` 해서 넘길 수 있습니다.
 
 왜 **fingerprint 를 검증** 하는가:
@@ -697,7 +697,7 @@ SELECT @@GLOBAL.gtid_executed;
 
 > 💡 Azure 가 향후 CA 체인을 교체하면 이 단계가 깨질 수 있습니다. 주기적으로 [MS 공식 문서](https://learn.microsoft.com/en-us/azure/mysql/flexible-server/how-to-connect-tls-ssl) 를 확인하세요.
 
-## 13.1 root CA bundle 생성 (기본값)
+## 13.1 root CA bundle 생성
 
 ```bash
 # 1) DigiCert Global Root G2 PEM 다운로드
@@ -722,6 +722,8 @@ openssl crl2pkcs7 -nocrl -certfile /tmp/azure_mysql_ca_bundle.pem \
   | openssl pkcs7 -print_certs -noout | grep -E 'subject|issuer'
 ```
 
+![root CA bundle 생성](img/16_root_ca_bundle_create.png)
+
 ## 13.2 fingerprint 검증
 
 ```bash
@@ -735,6 +737,8 @@ openssl x509 -in /tmp/ms_rsa_root_2017.pem -noout -fingerprint -sha256
 # → fingerprint 는 MS 공식 문서에서 최신 값을 확인하세요 (CA rotation 이 있을 수 있음)
 ```
 
+![fingerprint 검증](img/17_root_ca_fingerprint_verify.png)
+
 ## 13.3 BLUE 서버를 bundle 로 검증
 
 ```bash
@@ -744,9 +748,11 @@ echo Q | openssl s_client -starttls mysql \
   | grep "Verify return code"
 ```
 
-> 💡 **단일 PEM fallback**: 만약 bundle 으로 검증이 실패하고 DigiCert G2 단일 PEM 으로는 성공하는 경우 (또는 반대), 그것은 현 시점 BLUE 서버가 해당 루트로만 서명되었다는 뜻입니다. 운영용으로는 bundle 을 유지하고, Step 14 에서 검증 성공한 PEM 경로를 `@cert` 에 넘기면 됩니다.
+> 💡 **단일 PEM fallback (진단용)**: 운영 기본값은 항상 bundle (`/tmp/azure_mysql_ca_bundle.pem`) 입니다.
+> 다만 bundle 검증이 실패하면, Step 13.1에서 준비한 각 PEM (`/tmp/dgrootg2.pem`, `/tmp/ms_rsa_root_2017.pem`)으로 `openssl s_client`를 개별 검증해 현재 BLUE 서버의 서명 루트를 식별할 수 있습니다.
+> 원인 분석 후에는 다시 bundle 기준으로 운영 절차를 수행하세요.
 
-![root CA 준비](img/16_root_ca_prepare.png)
+![BLUE 서버 bundle 검증](img/18_blue_server_bundle_verify.png)
 
 ## 13.4 procedure 시그니처 확인 (옵션)
 
@@ -780,7 +786,6 @@ SELECT parameter_name, data_type, ordinal_position, parameter_mode
 mysqlsh --uri <admin-user>@<green-fqdn>:3306 \
   --ssl-mode=REQUIRED --password='<password>' --sql <<EOF
 SET @cert = '$(cat /tmp/azure_mysql_ca_bundle.pem)';
--- (Step 13.3 에서 bundle 대신 DigiCert G2 단일 PEM 으로만 검증 성공한 경우에만 /tmp/dgrootg2.pem 으로 교체)
 
 CALL mysql.az_replication_change_master_with_gtid(
   '<blue-fqdn>',
@@ -796,7 +801,7 @@ SHOW REPLICA STATUS\G
 EOF
 ```
 
-![change master + start](img/17_change_master_start.png)
+![change master + start](img/19_change_master_start.png)
 
 ---
 
@@ -838,7 +843,7 @@ SELECT @@GLOBAL.gtid_executed AS green_gtid;
 
 > 💡 BLUE 에 신규 트랜잭션이 계속 들어오는 환경에서는 두 쿼리 실행 사이의 micro-gap 만큼 GREEN 이 뒤처져 보일 수 있습니다. 같은 쿼리를 2~3회 반복해 GREEN 이 BLUE 를 계속 따라가는지 (값이 함께 증가하는지) 확인하세요.
 
-![GTID 일치 확인](img/18_replication_propagation_test.png)
+![GTID 일치 확인](img/20_replication_propagation_test.png)
 
 ---
 
@@ -872,9 +877,9 @@ BLUE 8.0 Primary
 
 Azure Portal → GREEN 서버 → **Replication** → **Add replica**:
 
-![GREEN Read Replica 생성 - 진입](img/19_green_add_replica_portal.png)
+![GREEN Read Replica 생성 - 진입](img/21_green_add_replica_portal.png)
 
-![GREEN Read Replica 생성 - 입력](img/20_green_add_replica_form.png)
+![GREEN Read Replica 생성 - 입력](img/22_green_add_replica_form.png)
 
 CLI 예시:
 ```bash
@@ -964,7 +969,7 @@ write freeze 가 필요한 이유: BLUE 가 계속 쓰기를 받는 동안은 GR
      --name read_only --value ON
    ```
 
-   ![cutover - read_only ON](img/21_cutover_blue_read_only_on.png)
+  ![cutover - read_only ON](img/23_cutover_blue_read_only_on.png)
 
    > `read_only=ON` 은 `SUPER` / `CONNECTION_ADMIN` 권한이 없는 모든 계정의 쓰기를 차단해 BLUE 의 일반 사용자 DML 을 정지시키기 위한 조치입니다.
    > Azure Flex 에서 이 권한은 `azure_superuser` (PaaS 내부 계정) 만 보유 → 사용자가 생성한 관리자도 차단됩니다.
@@ -995,19 +1000,19 @@ SHOW REPLICA STATUS\G
 -- Seconds_Behind_Source=0, Last_IO_Errno=0, Last_SQL_Errno=0
 ```
 
-![cutover - REPLICA STATUS](img/22_cutover_replica_status_caughtup.png)
+![cutover - REPLICA STATUS](img/24_cutover_replica_status_caughtup.png)
 
 ## 19.2 BLUE→GREEN 복제 끊기
 
 ```sql
 CALL mysql.az_replication_stop;
 ```
-![az_replication_stop](img/23_cutover_az_replication_stop.png)
+![az_replication_stop](img/25_cutover_az_replication_stop.png)
 
 ```sql
 CALL mysql.az_replication_remove_master;
 ```
-![az_replication_remove_master](img/24_cutover_az_replication_remove_master.png)
+![az_replication_remove_master](img/26_cutover_az_replication_remove_master.png)
 
 ## 19.3 검증
 
@@ -1016,7 +1021,7 @@ SHOW REPLICA STATUS\G
 -- 빈 결과(Empty set) 가 반환되어야 함
 ```
 
-![cutover 후 REPLICA STATUS 빈 결과](img/25_cutover_replica_status_empty.png)
+![cutover 후 REPLICA STATUS 빈 결과](img/27_cutover_replica_status_empty.png)
 
 > `az_replication_stop` 은 IO/SQL thread 정지, `az_replication_remove_master` 는 master 설정 제거.
 > **둘 다 수행해야** GREEN 이 BLUE 에 의존하지 않는 8.4 신규 운영 primary 가 됩니다.
