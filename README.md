@@ -459,7 +459,7 @@ SELECT plugin_name, plugin_status, plugin_type, plugin_library
 > **목적**: BLUE 의 스키마 / 데이터 / 선택된 사용자 / routine / trigger / event 를 **consistent 스냅샷** 으로 점프박스의 `/data` 에 덤프합니다. dump 에는 해당 시점의 GTID 좌표가 함께 기록되어 Step 8 에서 추출됩니다.  
 > **실행 위치**: 💻VM → 🟦BLUE
 
-> 🔀 **대안 경로 안내**: 이 Step 7~12 는 **dump/load 기반 시딩** 경로입니다. BLUE Read Replica 를 8.4 로 in-place 업그레이드 한 뒤 promote 해서 GREEN 을 구성하는 **물리 시딩 대안** 은 → [docs/seed_via_replica_promotion.md](docs/seed_via_replica_promotion.md). 둘 중 한 경로만 수행하면 되며, 대안 경로를 택하면 Step 7~12 를 그 문서 절차로 대체하고 나머지(Step 1~6, 13~20)는 동일하게 따릅니다.
+> 🔀 **대안 경로 안내**: 이 Step 7-12 는 **dump/load 기반 시딩** 경로입니다. BLUE Read Replica 를 8.4 로 in-place 업그레이드 한 뒤 promote 해서 GREEN 을 구성하는 **물리 시딩 대안** 은 → [docs/seed_via_replica_promotion.md](docs/seed_via_replica_promotion.md). 둘 중 한 경로만 수행하면 되며, 대안 경로를 택하면 Step 7-12 를 그 문서 절차로 대체하고 나머지(Step 1-6, 13-20)는 동일하게 따릅니다.
 
 ## 7.1 dump 디렉토리 준비
 

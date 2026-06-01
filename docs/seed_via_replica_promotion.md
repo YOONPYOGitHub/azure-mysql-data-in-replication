@@ -1,6 +1,6 @@
 # 대안 시딩 — BLUE Read Replica 업그레이드 · promotion 으로 GREEN 구성
 
-> [README.md](../README.md) 의 **Step 7~12 (dump/load 기반 시딩) 대안 경로** 참조 문서.
+> [README.md](../README.md) 의 **Step 7-12 (dump/load 기반 시딩) 대안 경로** 참조 문서.
 > `util.dumpInstance` / `util.loadDump` / `gtid reset` 으로 GREEN 을 채우는 대신,
 > **BLUE 의 Read Replica 를 8.4 로 in-place 업그레이드한 뒤 promote 해서 GREEN 으로 삼고**,
 > promotion 시점 GTID 부터 Data-in Replication 을 잇는 방식입니다.
@@ -13,14 +13,14 @@
 - 이미 물리 복제본(Read Replica)이 존재해, 이를 재활용해 시딩 시간을 줄이고 싶을 때
 - dump/load 시점 정합성(`--consistent`)·GTID reset 절차를 생략하고, **Azure 가 관리하는 복제본을 그대로 승격** 하고 싶을 때
 
-> 이 경로를 쓰면 README 의 **Step 7~12 (dump → GTID 추출 → load → GTID reset)** 를 이 문서 절차로 **대체** 합니다.
-> 나머지 단계 — Step 1~6 (사전 점검 / 계정 / 파라미터), Step 13 (CA bundle), Step 14~15 (change master + 검증), Step 16~20 (replica / 정합성 / cutover) — 는 README 를 그대로 따릅니다.
+> 이 경로를 쓰면 README 의 **Step 7-12 (dump → GTID 추출 → load → GTID reset)** 를 이 문서 절차로 **대체** 합니다.
+> 나머지 단계 — Step 1-6 (사전 점검 / 계정 / 파라미터), Step 13 (CA bundle), Step 14-15 (change master + 검증), Step 16-20 (replica / 정합성 / cutover) — 는 README 를 그대로 따릅니다.
 
 ---
 
 ## 2. dump/load 경로와의 비교
 
-| 항목 | dump/load (README Step 7~12) | 본 문서 (replica promotion) |
+| 항목 | dump/load (README Step 7-12) | 본 문서 (replica promotion) |
 |---|---|---|
 | GREEN 초기 데이터 | `util.loadDump` 로 적재 | BLUE Read Replica 를 그대로 재사용 (데이터 **이미 보유**) |
 | major version 8.0 → 8.4 | GREEN 을 8.4 로 신규 생성 | Read Replica 를 **in-place major upgrade** |
@@ -49,11 +49,11 @@ BLUE 8.0 Primary
 
 | 순서 | 작업 | 실행 위치 | README 대응 |
 |---|---|---|---|
-| 1 | BLUE 에 시딩용 Read Replica 1대 추가 | 💻VM → ☁️Azure | (Step 7~9 대체) |
+| 1 | BLUE 에 시딩용 Read Replica 1대 추가 | 💻VM → ☁️Azure | (Step 7-9 대체) |
 | 2 | 그 replica 를 8.4 로 major version upgrade | ☁️Azure | (Step 5 대체) |
 | 3 | replica promotion → standalone GREEN 8.4 | ☁️Azure | (Step 9 대체) |
 | 4 | GREEN HA = ZoneRedundant 구성 | ☁️Azure | (Step 5 대체) |
-| 5 | promotion GTID 확보 → Data-in Replication 구성 | 💻VM → 🟩GREEN | Step 13~14 (+ Step 11~12 대체) |
+| 5 | promotion GTID 확보 → Data-in Replication 구성 | 💻VM → 🟩GREEN | Step 13-14 (+ Step 11-12 대체) |
 | 6 | GREEN Read Replica 2대 구성 | 💻VM → ☁️Azure | Step 16 |
 
 ---
@@ -62,7 +62,7 @@ BLUE 8.0 Primary
 
 본 경로에서도 README 의 다음은 **그대로 선행** 합니다.
 
-- **Step 1~3** — BLUE 호환성 검사(Upgrade Checker) / 파라미터 / DEFINER 점검. major version upgrade 전에 8.4 차단 요소를 반드시 제거 (upgrade 가 이 검증을 대신하지 않음)
+- **Step 1-3** — BLUE 호환성 검사(Upgrade Checker) / 파라미터 / DEFINER 점검. major version upgrade 전에 8.4 차단 요소를 반드시 제거 (upgrade 가 이 검증을 대신하지 않음)
 - **Step 4** — BLUE 에 `syncuser` (`REPLICATION SLAVE`) 생성. promotion 후 Data-in Replication 에 그대로 사용
 - **Step 13** — BLUE TLS root CA bundle (`/tmp/azure_mysql_ca_bundle.pem`) 준비
 
@@ -115,7 +115,7 @@ az mysql flexible-server replica stop-replication \
   --yes
 ```
 
-> promote 직후의 `@@GLOBAL.gtid_executed` 가 **"BLUE 의 어디까지 적용됐는지" 를 나타내는 기준 GTID** 입니다 (5.5 에서 사용). 이 값 덕분에 dump/load 경로의 `gtid reset` (Step 11~12) 이 **불필요** 합니다.
+> promote 직후의 `@@GLOBAL.gtid_executed` 가 **"BLUE 의 어디까지 적용됐는지" 를 나타내는 기준 GTID** 입니다 (5.5 에서 사용). 이 값 덕분에 dump/load 경로의 `gtid reset` (Step 11-12) 이 **불필요** 합니다.
 
 ### 5.4 GREEN HA 구성
 
@@ -185,7 +185,7 @@ az mysql flexible-server replica create \
   --location <same-or-paired-region>
 ```
 
-이후 **Step 17 (정합성 검증) → Step 18~20 (cutover)** 은 README 를 그대로 따릅니다.
+이후 **Step 17 (정합성 검증) → Step 18-20 (cutover)** 은 README 를 그대로 따릅니다.
 
 ---
 
