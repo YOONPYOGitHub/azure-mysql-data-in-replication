@@ -459,6 +459,8 @@ SELECT plugin_name, plugin_status, plugin_type, plugin_library
 > **목적**: BLUE 의 스키마 / 데이터 / 선택된 사용자 / routine / trigger / event 를 **consistent 스냅샷** 으로 점프박스의 `/data` 에 덤프합니다. dump 에는 해당 시점의 GTID 좌표가 함께 기록되어 Step 8 에서 추출됩니다.  
 > **실행 위치**: 💻VM → 🟦BLUE
 
+> 🔀 **대안 경로 안내**: 이 Step 7~12 는 **dump/load 기반 시딩** 경로입니다. BLUE Read Replica 를 8.4 로 in-place 업그레이드 한 뒤 promote 해서 GREEN 을 구성하는 **물리 시딩 대안** 은 → [docs/seed_via_replica_promotion.md](docs/seed_via_replica_promotion.md). 둘 중 한 경로만 수행하면 되며, 대안 경로를 택하면 Step 7~12 를 그 문서 절차로 대체하고 나머지(Step 1~6, 13~20)는 동일하게 따릅니다.
+
 ## 7.1 dump 디렉토리 준비
 
 ```bash
@@ -1026,6 +1028,8 @@ SHOW REPLICA STATUS\G
 > `az_replication_stop` 은 IO/SQL thread 정지, `az_replication_remove_master` 는 master 설정 제거.
 > **둘 다 수행해야** GREEN 이 BLUE 에 의존하지 않는 8.4 신규 운영 primary 가 됩니다.
 
+> 🧩 **예외 — cutover 전후로 GREEN 에 트랜잭션 누락이 의심될 때**: 누락 *여부* 는 Step 17 정합성 검증으로 판정하되, **무엇이 누락됐는지(어떤 row 가 어떤 값으로 변경됐는지)** 를 BLUE binlog 에서 엔진 레벨로 추적하려면 → [docs/binlog_tracking.md](docs/binlog_tracking.md)
+
 ---
 
 # Step 20. Application 전환 + 사후 정리
@@ -1102,6 +1106,8 @@ DNS / connection string 을 BLUE 로 원복 → BLUE `read_only=OFF` 로 되돌�
 | [docs/azure_flex_allowlist.md](docs/azure_flex_allowlist.md) | Upgrade Checker 노이즈 (무조건 무시 / 조건부 무시 / Error) 분류 |
 | [docs/authentication_plugins.md](docs/authentication_plugins.md) | `mysql_native_password` vs `caching_sha2_password`, 8.4 `authentication_policy`, `--includeUsers` 동작 |
 | [docs/definer_handling.md](docs/definer_handling.md) | DEFINER 판정 표, ERROR 1449, DROP+CREATE 레시피 |
+| [docs/binlog_tracking.md](docs/binlog_tracking.md) | (예외) 누락 의심 시 `mysqlbinlog` 로 BLUE binlog 를 디코딩해 누락 트랜잭션을 row 단위로 추적 |
+| [docs/seed_via_replica_promotion.md](docs/seed_via_replica_promotion.md) | (대안) dump/load 대신 BLUE Read Replica 를 8.4 업그레이드 · promote 해 GREEN 을 시딩하는 경로 |
 
 ---
 
@@ -1118,6 +1124,7 @@ DNS / connection string 을 BLUE 로 원복 → BLUE `read_only=OFF` 로 되돌�
 | `Replica_IO_Running=No`, `SSL connection error` | CA 불일치 또는 chain 부조 | 1) Step 13.3 bundle (`/tmp/azure_mysql_ca_bundle.pem`) 으로 `openssl s_client` 검증 재수행. 2) bundle 으로 실패시 Step 13.1 의 각 PEM (`dgrootg2.pem`, `ms_rsa_root_2017.pem`) 를 개별로 검증해 현재 BLUE 서버가 서명된 루트를 특정 → Step 14 `@cert` 에 해당 PEM 주입 |
 | `Replica_IO_Running=Connecting` 으로 멈춤 | 네트워크 / 방화벽 / sync 계정 권한 | BLUE Networking 의 firewall 에 GREEN outbound IP 확인, `syncuser` 의 `ssl_type` 및 `REPLICATION SLAVE` 권한 확인 |
 | `Replica_SQL_Running=No`, `Last_SQL_Errno=1062` (duplicate key) | dump 시점 이후 BLUE 변경이 load 에 일부 포함되어 GTID 어긋남 | dump → load → gtid reset → start replication 을 일관된 시점으로 재실행 |
+| 정합성 검증에서 GREEN 에 row 누락 의심 (무엇이 빠졌는지 추적 필요) | cutover 전후 일부 트랜잭션 미적용 | BLUE binlog 를 `mysqlbinlog` 로 디코딩해 누락 트랜잭션 추적 → [docs/binlog_tracking.md](docs/binlog_tracking.md) |
 | `ERROR 1449: definer does not exist` | DEFINER 재정의 누락 | [docs/definer_handling.md](docs/definer_handling.md) |
 | `the following arguments are required: --server-name/-s` | `gtid reset` 만 `-s` (다른 명령은 `-n`) | `-s` 로 변경 |
 | cutover 후 EVENT 가 실행되지 않음 | dump 시 `SLAVESIDE_DISABLED` 또는 `event_scheduler=OFF` | Step 20 의 `event_scheduler=ON` + `ALTER EVENT ... ENABLE` 재확인 |
