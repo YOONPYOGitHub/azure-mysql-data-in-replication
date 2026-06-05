@@ -22,7 +22,7 @@ GREEN 에 일부 트랜잭션이 누락된 것으로 의심되거나 이미 확�
 | 항목 | 요구 | 확인 |
 |---|---|---|
 | BLUE binlog 보존 | 추적 대상 구간이 아직 purge 되지 않아야 함 | `binlog_expire_logs_seconds` (Step 2). 이미 purge 됐으면 `ERROR 1236` → 추적 불가 |
-| binlog 포맷 | `ROW` (row 이벤트가 있어야 값 디코딩 가능) | BLUE `binlog_format=ROW`. 추적 정확도를 높이려면 `binlog_row_image=FULL` 권장 — 기본값 `minimal` 에서도 추적은 가능하나 UPDATE 의 변경 전(WHERE) 이미지가 PK·변경 컴럼으로 제한됨 (Step 2 / parameter_compatibility) |
+| binlog 포맷 | `ROW` (row 이벤트가 있어야 값 디코딩 가능) | BLUE `binlog_format=ROW`. 추적 정확도를 높이려면 `binlog_row_image=FULL` 권장 — 기본값 `minimal` 에서도 추적은 가능하나 UPDATE/DELETE 의 before-image 가 식별 키(PK)로 제한됨 → 상세 §3.4 (Step 2 / parameter_compatibility) |
 | 접속 계정 | binlog 원격 읽기 권한 | Step 4 에서 만든 `syncuser` (`REPLICATION SLAVE`) 재사용 가능. 또는 `REPLICATION SLAVE` 보유 계정 |
 | 실행 위치 | 점프박스(💻VM) 에서 BLUE 로 원격 | `mysqlbinlog` 가 `mysql-client` 에 포함 (Step 1 설치) |
 | TLS | BLUE 는 `REQUIRED` | `--ssl-mode=REQUIRED` |
@@ -132,6 +132,55 @@ COMMIT/*!*/;
 > `@N` 은 컬럼 **이름이 아니라 순번** 입니다. 어떤 컬럼인지 확정하려면 BLUE/GREEN 에서
 > `SELECT ORDINAL_POSITION, COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='<db>' AND TABLE_NAME='<tbl>' ORDER BY ORDINAL_POSITION;`
 > 로 순번↔컬럼명 매핑표를 떠 놓고 보면 정확합니다.
+
+### 3.4 `binlog_row_image` 에 따라 디코딩에 보이는 값이 달라짐
+
+row 이벤트는 변경 **전(before-image, BI)** / **후(after-image, AI)** 두 이미지를 담는데, `binlog_row_image` 가 이 BI/AI 에 **어떤 컬럼을 기록할지** 를 결정합니다. 즉 같은 트랜잭션이라도 BLUE 의 `binlog_row_image` 설정에 따라 §3.3 디코딩 출력에서 **볼 수 있는 컬럼이 달라집니다.**
+
+이벤트별로 사용하는 이미지 자체가 다릅니다:
+
+| 이벤트 | 기록 이미지 | `FULL` 일 때 | `minimal` 일 때 |
+|---|---|---|---|
+| **INSERT** (`Write_rows`) | AI 만 | 전체 컬럼 | **전체 컬럼** (새 행이라 양쪽 동일) |
+| **UPDATE** (`Update_rows`) | BI + AI | BI=전체, AI=전체 | **BI=식별 키(PK)만**, **AI=변경된 컬럼만** |
+| **DELETE** (`Delete_rows`) | BI 만 | 전체 컬럼 | **식별 키(PK)만** |
+
+추적 관점에서의 의미:
+
+- **INSERT** 는 `minimal` 이어도 전체 컬럼이 남으므로 어떤 값이 들어갔는지 완전히 추적 가능 (값 손실 없음).
+- **UPDATE** 는 `minimal` 이면 **변경된 컬럼의 "이전 값" 을 알 수 없습니다.** BI 에 PK 만 남고, 바뀐 컬럼은 AI(새 값)로만 보이기 때문입니다. `FULL` 이면 모든 컬럼의 변경 전·후 값이 다 보입니다.
+- **DELETE** 는 `minimal` 이면 **삭제된 행의 PK 만** 남아 "무엇이 지워졌는지" 는 알아도 **삭제된 행의 전체 내용은 복원할 수 없습니다.** `FULL` 이면 삭제 직전 행 전체가 보입니다.
+- 예외: **PK·NOT NULL UNIQUE 키가 전혀 없는 테이블** 은 `minimal` 이라도 행을 식별할 수단이 없어 MySQL 이 BI 에 전체 컬럼을 기록합니다 (→ [parameter_compatibility.md §2.6](parameter_compatibility.md)).
+
+같은 UPDATE 트랜잭션을 두 설정으로 디코딩하면 출력이 이렇게 갈립니다 (컬럼 5개 중 `@4` 만 변경했다고 가정):
+
+```text
+# binlog_row_image = minimal
+### UPDATE `ecommerce`.`qna`
+### WHERE
+###   @1=625                       /* PK 만 (행 식별용) */
+### SET
+###   @4='수정된 내용'            /* 변경된 컬럼만, 새 값만 */
+
+# binlog_row_image = FULL
+### UPDATE `ecommerce`.`qna`
+### WHERE
+###   @1=625                       /* 전체 컬럼 = 변경 전 값 */
+###   @2=220
+###   @3=94
+###   @4='원래 내용'              /* 변경 전 값까지 보임 */
+###   @5='2026-05-27 02:00:00'
+### SET
+###   @1=625                       /* 전체 컬럼 = 변경 후 값 */
+###   @2=220
+###   @3=94
+###   @4='수정된 내용'
+###   @5='2026-05-27 02:00:00'
+```
+
+> 정리: **누락 *여부* 판정(어떤 GTID 가 빠졌는가)은 `minimal` 로도 충분**합니다 (GTID 는 이미지와 무관). 하지만 **누락된 UPDATE 의 이전 값 / DELETE 된 행의 전체 내용까지 복원·감사** 하려면 BLUE 가 `FULL` 이어야 합니다. 이미 발생한 구간을 소급 추적할 때는 그 시점 BLUE 의 `binlog_row_image` 설정이 무엇이었는지가 추적 가능 범위를 결정합니다 (사후에 `FULL` 로 바꿔도 과거 binlog 에는 소급 적용되지 않음).
+
+> 📎 **실측 샘플**: 동일한 INSERT→UPDATE→DELETE 시퀀스를 두 설정으로 실제 디코딩한 결과 — [samples/binlog_FULL.sql](samples/binlog_FULL.sql) / [samples/binlog_MINIMAL.sql](samples/binlog_MINIMAL.sql) (server-id·GTID UUID·DB명은 placeholder 로 sanitize). MINIMAL 쪽 UPDATE 의 `WHERE` 에 PK 만, DELETE 의 `WHERE` 에 PK 만 남는 것을 직접 비교할 수 있습니다.
 
 ---
 
