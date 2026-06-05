@@ -9,9 +9,9 @@
 
 | 분류 | 의미 | 대표 변수 |
 |---|---|---|
-| **고정/필수** | Azure Flex 기본값이자 Data-in Replication 작동에 필수. 변경 불가/불필요 | `gtid_mode`, `enforce_gtid_consistency`, `binlog_format`, `binlog_row_image`, `log_bin` |
+| **고정/필수** | Azure Flex 기본값이자 Data-in Replication 작동에 필수. 변경 불가/불필요 | `gtid_mode`, `enforce_gtid_consistency`, `binlog_format`, `log_bin` |
 | **BLUE = GREEN 일치 필수** | 다르면 데이터 의미가 변형됨. 일부는 서버 생성 후 변경 불가 | `lower_case_table_names`, `character_set_server`, `collation_server`, `time_zone`, `transaction_isolation`, `innodb_strict_mode`, `sql_mode` |
-| **운영용 가변** | 운영 정책에 따라 조정 | `binlog_expire_logs_seconds`, `event_scheduler` |
+| **운영용 가변** | 운영 정책에 따라 조정 | `binlog_row_image` (선택), `binlog_expire_logs_seconds`, `event_scheduler` |
 | **충돌 금지** | BLUE 와 절대 같으면 안 됨 | `server_uuid` (`server_id` 도 권장) |
 | **버전별 차이** | 8.4 에서 제거/추가됨 | `default_authentication_plugin` (제거), `authentication_policy` (신규) |
 
@@ -26,7 +26,6 @@
 | `gtid_mode` | `ON` | Data-in Replication 의 기준 좌표 | Azure 파라미터로 ON (대부분 기본 ON) |
 | `enforce_gtid_consistency` | `ON` | GTID 안전성 보장 (non-transactional DDL 금지) | ON 설정 후 재시작 |
 | `binlog_format` | `ROW` | row 단위 변경 캡처. statement-based 보다 안전 | Azure Flex 는 기본 ROW, 변경 불가 |
-| `binlog_row_image` | `FULL` | row-based replication 의 안전성을 높임 (전 컬럼 이미지 기록). PK 없는 테이블은 별도 대응 필요 → §2.6 참조 | Azure Flex 기본 FULL |
 | `log_bin` | `ON` | binlog 자체 활성화 | Azure Flex 기본 ON |
 
 ### 2.2 BLUE = GREEN 일치 필수
@@ -39,13 +38,14 @@
 | `time_zone` | BLUE 와 동일 | `TIMESTAMP` 컴럼 저장값에 영향. 다르면 시간차만큼 어긋남 | Azure Flex 기본 `+00:00`. Azure 파라미터로 변경 |
 | `transaction_isolation` | BLUE 와 동일 (`REPEATABLE-READ` 기본) | 락/팬텀 동작. 다르면 같은 SQL 의 결과/락 동작 변화 → 앱 회귀 | Azure 파라미터로 변경 |
 | `innodb_strict_mode` | BLUE 와 동일 | DDL 검증 수준. 다르면 cutover 후 DDL 거부 가능 | Azure 파라미터로 변경 |
-| `sql_mode` | BLUE 와 동일 | 쿼리 동작 전반 (zero-date, division by zero 등) | 8.4 는 `NO_AUTO_CREATE_USER` 자동 제거됨 — 그대로 같이 정렬됨 |
+| `sql_mode` | BLUE 와 동일 | 쿼리 동작 전반 (zero-date, division by zero, GROUP BY, strict DML 등). 다르면 DML/DDL 검증·정렬·zero-date·division-by-zero 처리가 달라져 앱 회귀 가능 | GREEN `sql_mode` 를 BLUE 와 동일하게 Azure 파라미터로 맞춤 |
 
 ### 2.3 운영용 가변
 
 | 변수 | 권장값 | 의미 | 비고 |
 |---|---|---|---|
-| `binlog_expire_logs_seconds` | `604800` (7일) 이상 | binlog 보존 기간. dump → load → CDC 안정화 기간을 모두 포괄해야 함 | Azure Flex 기본 `0` 은 **무제한 보존이 아니라 handle 이 free 되는 즉시 삭제 가능** 을 의미. 반드시 명시 상향 권장 (대용량은 `1209600` 이상 검토) |
+| `binlog_row_image` | Azure Flex 기본 `minimal` (선택, 값 고정 아님) | row 이미지 기록 범위. 복제 자체는 `minimal`/`FULL` 모두 정상 동작 | BLUE≡GREEN 동일 스키마이면 `minimal` 도 정확히 복제. **CDC 연동 / 감사 / 스키마 불일치 보험** 이 필요한 경우에만 `FULL` 선택. GREEN(target)은 복제 정확도와 무관 → §2.6 참조 |
+| `binlog_expire_logs_seconds` | `604800` (7일) 이상 | binlog 보존 기간. dump → load → CDC 안정화 기간을 모두 포괄해야 함 | Azure Flex 기본 `0` 은 **무제한 보존이 아니라 handle 이 free 되는 즉시 삭제 가능** 을 의미 ([MS Learn — server parameters](https://learn.microsoft.com/en-us/azure/mysql/flexible-server/concepts-server-parameters)). 반드시 명시 상향 권장 (대용량은 `1209600` 이상 검토). 단 **accelerated logs 기능이 켜져 있으면 이 값은 무시**되므로 비활성 상태에서 설정 |
 | `event_scheduler` | GREEN load 중 `OFF`, cutover 시 `ON` | event 가 중복 실행되는 것 방지 | Azure 파라미터로만 변경 가능 |
 
 ### 2.4 충돌 금지
@@ -64,13 +64,17 @@
 
 ### 2.6 PK 없는 테이블 / GIPK 주의
 
-`binlog_row_image=FULL` 은 row 이미지를 전부 기록하지만, **PK 없는 InnoDB 테이블이 replication 에서 안전함을 보장하지는 않습니다**. Primary Key 는 Data-in Replication 의 hard requirement 는 아니지만, Microsoft 공식 문서는 source 의 모든 테이블에 명시적 Primary Key 를 둘 것을 권장하며, PK 가 없으면 row-level lookup 비용 때문에 **replica 의 적용 속도 저하 (replication slowness)** 가 발생할 수 있다고 설명합니다. UNIQUE index 존재 여부와 무관하게 PK 없는 테이블은 사전 검토 대상입니다.
+`binlog_row_image` 값(`minimal`/`FULL`)과 무관하게, **PK(또는 NOT NULL UNIQUE 키) 없는 InnoDB 테이블은 사전 검토 대상**입니다. 참고로 `minimal` 이라도 PK·NOT NULL UNIQUE 키가 모두 없는 테이블은 MySQL 이 before-image 에 전체 컬럼을 기록하므로 복제 정확성 자체는 유지됩니다. 문제는 row 이미지가 아니라 **PK 부재로 인한 성능**입니다. Primary Key 는 Data-in Replication 의 hard requirement 는 아니지만, Microsoft 공식 문서는 source 의 모든 테이블에 명시적 Primary Key 를 둘 것을 권장하며, PK 가 없으면 replica 가 UPDATE/DELETE 적용 시 매 row 마다 full table scan 으로 대상 행을 찾는 비용 때문에 **replica 의 적용 속도 저하 (replication slowness)** 가 발생할 수 있다고 설명합니다.
 
-또한 Azure Database for MySQL Flexible Server 8.0+ 는 `sql_generate_invisible_primary_key (GIPK)` 가 기본 ON 으로, PK 가 없는 InnoDB 테이블에 자동으로 invisible PK 컬럼이 추가됩니다. Data-in Replication 환경에서 GIPK 가 활성화되어 있으면 다음 시나리오에서 충돌 가능:
+또한 Azure Database for MySQL Flexible Server 8.0.30+ 는 `sql_generate_invisible_primary_key (GIPK)` 가 기본 ON 으로(MySQL 커뮤니티 기본은 OFF), PK 가 없는 InnoDB 테이블에 자동으로 invisible PK 컬럼(`my_row_id`)이 추가됩니다.
+
+> ⚠️ **핵심**: `sql_generate_invisible_primary_key` 설정은 **복제되지 않으며 replica 의 applier thread 는 이 값을 무시**합니다 (MySQL 공식). 즉 source(BLUE)에서 GIPK 가 어떻게 설정되어 있든 replica(GREEN)에는 전파되지 않으므로, 두 서버의 설정·스키마가 어긋날 수 있습니다. replica 가 PK 없는 테이블에 GIPK 를 자동 생성하게 하려면 채널 옵션 `REQUIRE_TABLE_PRIMARY_KEY_CHECK = GENERATE` (MySQL 8.0.32+) 를 사용합니다.
+
+Data-in Replication 환경에서 GIPK 관련 충돌 가능 시나리오:
 
 - BLUE 와 GREEN 의 GIPK 설정이 다르면 같은 테이블의 컬럼 구조가 어긋남 (GIPK 컬럼 유무)
-- cutover 후 GREEN 에서 해당 테이블에 직접 PK 를 추가하거나 `AUTO_INCREMENT` / 파티션 DDL 을 적용할 때 GIPK 와 충돌
-- dump 단계에서 GIPK 컬럼이 포함된 채 export 되어 target schema 와 mismatch 발생 가능
+- **복제 진행 중** source 가 PK 없던 테이블에 PK 를 추가하거나 `AUTO_INCREMENT` 컬럼을 추가하면, GIPK 가 켜진 replica 에서 `ERROR 1068 (Multiple primary key defined)` / `ERROR 1075` 로 복제 중단 가능 (MS 문서: 해당 테이블 GIPK 컬럼 정리 후 오류 skip → 복제 재시작으로 완화)
+- dump 시 `mysqldump`/`mysqlsh` 는 GIPK 컬럼을 **기본 포함**해 export 하므로 그대로 load 하면 GREEN 에도 동일 재생성됨. `--skip-generated-invisible-primary-key` 로 제외하거나 BLUE/GREEN 의 GIPK 설정이 다르면 target schema 와 mismatch 발생 가능
 
 **사전 점검**:
 

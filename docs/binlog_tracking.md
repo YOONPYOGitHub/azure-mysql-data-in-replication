@@ -22,7 +22,7 @@ GREEN 에 일부 트랜잭션이 누락된 것으로 의심되거나 이미 확�
 | 항목 | 요구 | 확인 |
 |---|---|---|
 | BLUE binlog 보존 | 추적 대상 구간이 아직 purge 되지 않아야 함 | `binlog_expire_logs_seconds` (Step 2). 이미 purge 됐으면 `ERROR 1236` → 추적 불가 |
-| binlog 포맷 | `ROW` (row 이벤트가 있어야 값 디코딩 가능) | BLUE `binlog_format=ROW`, `binlog_row_image=FULL` (Step 2 / parameter_compatibility) |
+| binlog 포맷 | `ROW` (row 이벤트가 있어야 값 디코딩 가능) | BLUE `binlog_format=ROW`. 추적 정확도를 높이려면 `binlog_row_image=FULL` 권장 — 기본값 `minimal` 에서도 추적은 가능하나 UPDATE 의 변경 전(WHERE) 이미지가 PK·변경 컴럼으로 제한됨 (Step 2 / parameter_compatibility) |
 | 접속 계정 | binlog 원격 읽기 권한 | Step 4 에서 만든 `syncuser` (`REPLICATION SLAVE`) 재사용 가능. 또는 `REPLICATION SLAVE` 보유 계정 |
 | 실행 위치 | 점프박스(💻VM) 에서 BLUE 로 원격 | `mysqlbinlog` 가 `mysql-client` 에 포함 (Step 1 설치) |
 | TLS | BLUE 는 `REQUIRED` | `--ssl-mode=REQUIRED` |

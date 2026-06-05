@@ -236,7 +236,7 @@ SHOW VARIABLES WHERE Variable_name IN (
 | `gtid_mode` | `ON` | `ON` | Step 8 에서 dump GTID 가 비어 나옴 → replication 불가 |
 | `enforce_gtid_consistency` | `ON` | `ON` | non-transactional DDL 로 GTID 좌표 오염 |
 | `binlog_format` | `ROW` | `ROW` (변경 불가) | statement 기반 차이로 데이터 불일치 |
-| `binlog_row_image` | `FULL` | `FULL` | 전 컬럼 이미지를 잡으므로 row-based replication 안전성 증가. 단 PK 없는 InnoDB 테이블은 [docs/parameter_compatibility.md §2.6](docs/parameter_compatibility.md) 경고 참조 |
+| `binlog_row_image` | `minimal` 가능 | `minimal` | **기본 `minimal` 로 충분** — BLUE≡GREEN 동일 스키마이면 PK 유무와 무관하게 `minimal` 도 정확히 복제. CDC 연동 / 감사 등 부가 목적이 있을 때만 `FULL` 선택 ([docs/parameter_compatibility.md §2.6](docs/parameter_compatibility.md)) |
 | `log_bin` | `ON` | `ON` (변경 불가) | binlog 자체 없음 → replication 불가 |
 | `binlog_expire_logs_seconds` | **`604800` (7일) 이상** | `0` (기본값 — 무제한 아님. handle 이 free 되는 즉시 삭제 가능) | dump→load 중 binlog purge → `ERROR 1236` |
 | `lower_case_table_names` | BLUE 와 동일 | `1` | Step 5 에서 GREEN 도 동일 값으로 생성. **이후 변경 불가** |
@@ -416,7 +416,6 @@ SHOW VARIABLES WHERE Variable_name IN (
   'gtid_mode',
   'enforce_gtid_consistency',
   'binlog_format',
-  'binlog_row_image',
   'log_bin',
   'lower_case_table_names',
   'binlog_expire_logs_seconds',
@@ -442,7 +441,7 @@ SELECT plugin_name, plugin_status, plugin_type, plugin_library
 ![GREEN SHOW VARIABLES](img/07_green_show_variables.png)
 
 기대값 요약:
-- **고정/필수**: `gtid_mode=ON`, `enforce_gtid_consistency=ON`, `binlog_format=ROW`, `binlog_row_image=FULL`, `log_bin=ON`
+- **고정/필수**: `gtid_mode=ON`, `enforce_gtid_consistency=ON`, `binlog_format=ROW`, `log_bin=ON`
 - **BLUE 와 일치 필수**: `lower_case_table_names`, `character_set_server`, `collation_server`, `time_zone`, `transaction_isolation`, `innodb_strict_mode`, `sql_mode`
 - **로드용 임시 설정**: `event_scheduler=OFF` (cutover 시 ON 으로)
 - **server_uuid**: BLUE 와 절대 같으면 안 됨
@@ -905,7 +904,7 @@ az mysql flexible-server replica list -g <resource-group> -n <green-name> -o tab
 
 ## 16.2 모니터링 — 두 채널의 관점 분리
 
-이 시점의 토폴로지에는 두 가지 복제 채널이 공존하며, 각각 상태 확인 방법이 다릅니다. 한 쪽 지표만 보고 전체 상태를 판단하지 않도로록 나눠서 보세요.
+이 시점의 토폴로지에는 두 가지 복제 채널이 공존하며, 각각 상태 확인 방법이 다릅니다. 한 쪽 지표만 보고 전체 상태를 판단하지 않도록 나눠서 보세요.
 
 ### (A) BLUE → GREEN Data-in Replication 채널 — GREEN 에서 `SHOW REPLICA STATUS`
 

@@ -85,7 +85,7 @@ Upgrade Checker 는 일반적인 MySQL 8.0 → 8.4 업그레이드를 가정하�
 | 카테고리 | 처리 |
 |---|---|
 | `removedFunctions` 중 실제 사용 중 | 코드 수정 (`JSON_OBJECTAGG` 등 대체 함수 사용) |
-| `reservedKeywordsCheck` 신규 예약어 (`INTERSECT`, `EXCEPT`, `LATERAL` 등) | 식별자로 사용 중인지 확인 → 백틱 처리 또는 rename |
+| `reservedKeywordsCheck` 8.4 신규 예약어 (`MANUAL`, `PARALLEL`, `QUALIFY`, `TABLESAMPLE`) | 식별자로 사용 중인지 확인 → 백틱 처리 또는 rename |
 | `sqlMode` 차이로 동작이 바뀌는 쿼리 | 앱 회귀 테스트로 확인 후 수정 |
 
 ---
